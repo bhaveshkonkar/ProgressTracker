@@ -15,21 +15,37 @@ export const api = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
 
-    // Retry fetch logic in case trigger is slow
-    let profile = null;
+    // Retry fetch logic in case trigger/backfill is slow.
+    // Use a safe query that doesn't throw when 0 rows are returned.
+    let profile: any = null;
     let attempts = 0;
     while (!profile && attempts < 3) {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', user.id)
-          .single();
-        profile = data;
+          .eq('id', user.id);
+
+        if (error) {
+          console.error('Failed to load profile for user', user.id, error);
+          break;
+        }
+
+        profile = (data && data.length > 0) ? data[0] : null;
         if (!profile) await new Promise(r => setTimeout(r, 500));
         attempts++;
     }
 
-    return profile ? mapUser(profile) : { id: user.id, username: 'Loading...', avatarUrl: '', streak: 0 };
+    // Fallback lightweight user if profile row doesn't exist yet
+    if (!profile) {
+      return {
+        id: user.id,
+        username: user.email || 'User',
+        avatarUrl: '',
+        streak: 0,
+      };
+    }
+
+    return mapUser(profile);
   },
 
   signInWithGoogle: async () => {
